@@ -4,6 +4,7 @@ import { SCRAPE_CONFIG } from "../config/scrape-config.ts";
 import { scrapeHomepageLists } from "../scrapers/homepage-lists.ts";
 import { resolveFromCwd } from "../shared/utils.ts";
 import { saveOutput } from "../shared/output.ts";
+import { setLatestNotificationsCache } from "../shared/runtime-cache.ts";
 
 export async function main(): Promise<void> {
   const browser = await launchBrowser();
@@ -11,6 +12,7 @@ export async function main(): Promise<void> {
   try {
     const page = await createConfiguredPage(browser);
     const result = await scrapeHomepageLists(page);
+    setLatestNotificationsCache(result);
     const outputPath = resolveFromCwd(SCRAPE_CONFIG.homepage.outputFile);
 
     await saveOutput({
@@ -20,6 +22,7 @@ export async function main(): Promise<void> {
       label: "Homepage",
     });
     console.log(`Saved JSON to ${outputPath}`);
+    return result;
   } finally {
     await browser.close();
   }

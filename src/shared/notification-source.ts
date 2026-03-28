@@ -2,6 +2,7 @@ import { BANNER_LINKS_SECTION } from "./constants.ts";
 import { SCRAPE_CONFIG, type DetailSectionKey } from "../config/scrape-config.ts";
 import type { LatestNotificationsResult, NotificationItem } from "./types.ts";
 import { readJsonFile } from "./files.ts";
+import { getLatestNotificationsCache } from "./runtime-cache.ts";
 
 type LoadSectionItemsOptions = {
   manualUrl?: string;
@@ -20,7 +21,7 @@ export async function loadSectionItems(options: LoadSectionItemsOptions): Promis
     ];
   }
 
-  const parsed = await readJsonFile<LatestNotificationsResult>(SCRAPE_CONFIG.homepage.outputFile);
+  const parsed = await loadLatestNotificationsSource();
   const section = parsed.latestSections[options.sectionName];
 
   if (!section || !Array.isArray(section.items) || section.items.length === 0) {
@@ -43,7 +44,7 @@ export async function loadBannerLinks(): Promise<NotificationItem[]> {
     ];
   }
 
-  const parsed = await readJsonFile<LatestNotificationsResult>(SCRAPE_CONFIG.homepage.outputFile);
+  const parsed = await loadLatestNotificationsSource();
   if (!Array.isArray(parsed.bannerLinks) || parsed.bannerLinks.length === 0) {
     throw new Error(
       `No '${BANNER_LINKS_SECTION}' found in ${SCRAPE_CONFIG.homepage.outputFile}. Run 'npm run scrape' first.`,
@@ -51,6 +52,15 @@ export async function loadBannerLinks(): Promise<NotificationItem[]> {
   }
 
   return parsed.bannerLinks;
+}
+
+async function loadLatestNotificationsSource(): Promise<LatestNotificationsResult> {
+  const cached = getLatestNotificationsCache();
+  if (cached) {
+    return cached;
+  }
+
+  return readJsonFile<LatestNotificationsResult>(SCRAPE_CONFIG.homepage.outputFile);
 }
 
 export async function loadLatestJobs(): Promise<NotificationItem[]> {
