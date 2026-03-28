@@ -19,7 +19,13 @@ type RawAnchor = {
 
 export async function scrapeHomepageLists(page: Page): Promise<LatestNotificationsResult> {
   await page.goto(TARGET_URL, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector("a", { timeout: 30_000 });
+  await page.waitForSelector("body", { timeout: 30_000 });
+  try {
+    await page.waitForSelector("a", { timeout: 10_000, state: "attached" });
+  } catch {
+    // Some CI runs render the page more slowly or differently.
+    // We still attempt extraction from the loaded body.
+  }
   await page.waitForTimeout(PAGE_SETTLE_DELAY_MS);
 
   const homepageData = await page.evaluate(
