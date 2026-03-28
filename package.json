@@ -1,0 +1,26 @@
+{
+  "name": "new-project",
+  "version": "1.0.0",
+  "description": "Chromium-based notifications and detail-page scraper",
+  "main": "src/cli/scrape-homepage.ts",
+  "scripts": {
+    "worker": "node --env-file-if-exists=.env --experimental-strip-types src/worker/scrape-worker.ts",
+    "scrape:all": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-all.ts",
+    "scrape": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-homepage.ts",
+    "scrape:banner": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-banner-details.ts",
+    "scrape:job": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-job-details.ts",
+    "scrape:admit-card": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-admit-card-details.ts",
+    "scrape:result": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-result-details.ts",
+    "scrape:answer-key": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-answer-key-details.ts",
+    "scrape:syllabus": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-syllabus-details.ts",
+    "scrape:admission": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-admission-details.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "mongodb": "^6.17.0",
+    "playwright": "^1.58.2"
+  }
+}
