@@ -29,6 +29,11 @@ export async function runDetailSection(
   const maxWorkers = Math.max(1, Math.floor(SCRAPE_CONFIG.detailScraping.parallelWorkers));
 
   const items = await loadSectionItemsByKey(sectionKey);
+  if (items.length === 0) {
+    console.log(`${sectionConfig.displayName}: skipped (no items in ${SCRAPE_CONFIG.homepage.outputFile})`);
+    return;
+  }
+
   const itemsToProcess = items.slice(0, limit);
 
   const browser = await launchBrowser();

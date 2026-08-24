@@ -1,4 +1,3 @@
-import { BANNER_LINKS_SECTION } from "./constants.ts";
 import { SCRAPE_CONFIG, type DetailSectionKey } from "../config/scrape-config.ts";
 import type { LatestNotificationsResult, NotificationItem } from "./types.ts";
 import { readJsonFile } from "./files.ts";
@@ -46,9 +45,7 @@ export async function loadBannerLinks(): Promise<NotificationItem[]> {
 
   const parsed = await loadLatestNotificationsSource();
   if (!Array.isArray(parsed.bannerLinks) || parsed.bannerLinks.length === 0) {
-    throw new Error(
-      `No '${BANNER_LINKS_SECTION}' found in ${SCRAPE_CONFIG.homepage.outputFile}. Run 'npm run scrape' first.`,
-    );
+    return [];
   }
 
   return parsed.bannerLinks;

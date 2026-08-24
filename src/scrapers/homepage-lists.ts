@@ -52,6 +52,17 @@ export async function scrapeHomepageLists(page: Page): Promise<LatestNotificatio
     // Some CI runs render the page more slowly or differently.
     // We still attempt extraction from the loaded body.
   }
+  try {
+    await page.waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll("a")).some(
+          (anchor) => (anchor.textContent || "").trim().toLowerCase() === "view more",
+        ),
+      { timeout: 30_000 },
+    );
+  } catch {
+    // Proceed with whatever DOM is available if the page is slow or layout differs.
+  }
   await page.waitForTimeout(PAGE_SETTLE_DELAY_MS);
 
   const homepageData = await page.evaluate(
@@ -193,8 +204,17 @@ export async function scrapeHomepageLists(page: Page): Promise<LatestNotificatio
       };
 
       const firstContentSectionIndex = anchors.findIndex((_, index) => isContentSectionStart(index));
+      const firstViewMoreIndex = anchors.findIndex(
+        (anchor) => anchor.title.toLowerCase() === "view more",
+      );
+      const bannerSliceEnd =
+        firstContentSectionIndex >= 0
+          ? firstContentSectionIndex
+          : firstViewMoreIndex >= 0
+            ? firstViewMoreIndex
+            : anchors.length;
       const bannerLinks = anchors
-        .slice(0, firstContentSectionIndex >= 0 ? firstContentSectionIndex : 0)
+        .slice(0, bannerSliceEnd)
         .filter((anchor) => isBannerTitle(anchor.title))
         .map((anchor) => {
           const url = toAbsolute(anchor.href);
