@@ -17,6 +17,32 @@ type RawAnchor = {
   href: string | null;
 };
 
+/** Site may use singular/plural or different casing for the same section. */
+const SECTION_TITLE_ALIASES: Record<string, string> = {
+  "latest job": "Latest Jobs",
+  "latest jobs": "Latest Jobs",
+  "admit card": "Admit Card",
+  result: "Result",
+  results: "Result",
+  "answer key": "Answer Key",
+  syllabus: "Syllabus",
+  admission: "Admission",
+};
+
+function canonicalizeSectionTitle(title: string, allowedTitles: string[]): string | null {
+  const normalized = normalizeText(title);
+  if (allowedTitles.includes(normalized)) {
+    return normalized;
+  }
+
+  const aliased = SECTION_TITLE_ALIASES[normalized.toLowerCase()];
+  if (aliased && allowedTitles.includes(aliased)) {
+    return aliased;
+  }
+
+  return null;
+}
+
 export async function scrapeHomepageLists(page: Page): Promise<LatestNotificationsResult> {
   await page.goto(TARGET_URL, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("body", { timeout: 30_000 });
@@ -29,7 +55,7 @@ export async function scrapeHomepageLists(page: Page): Promise<LatestNotificatio
   await page.waitForTimeout(PAGE_SETTLE_DELAY_MS);
 
   const homepageData = await page.evaluate(
-    ({ allowedTitles, baseUrl }) => {
+    ({ allowedTitles, sectionAliases, baseUrl }) => {
       const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
       const toAbsolute = (href: string | null) => {
         if (!href) {
@@ -43,6 +69,20 @@ export async function scrapeHomepageLists(page: Page): Promise<LatestNotificatio
         }
       };
 
+      const resolveSectionTitle = (title: string): string | null => {
+        const normalized = normalize(title);
+        if (allowedTitles.includes(normalized)) {
+          return normalized;
+        }
+
+        const aliased = sectionAliases[normalized.toLowerCase()];
+        if (aliased && allowedTitles.includes(aliased)) {
+          return aliased;
+        }
+
+        return null;
+      };
+
       const sections: Record<string, RawSection> = {};
       const anchors: RawAnchor[] = Array.from(document.querySelectorAll("a")).map((anchor) => ({
         title: normalize(anchor.textContent || ""),
@@ -50,17 +90,28 @@ export async function scrapeHomepageLists(page: Page): Promise<LatestNotificatio
       }));
       const navigationTitles = new Set([
         "home",
+        "latest job",
         "latest jobs",
         "result",
+        "results",
         "admit card",
         "answer key",
         "syllabus",
+        "admission",
+        "up scholarship",
         "search",
         "contact us",
+        "about us",
+        "more",
+        "discover more",
       ]);
       const isPromotionalTitle = (title: string) => {
         const lower = title.toLowerCase();
+        // The site brands itself with a lowercase L ("SARKARl RESULT") and
+        // without spacing ("SarkariResults"), so compare on letters only.
+        const lettersOnly = lower.replace(/[^a-z]/g, "").replace(/l/g, "i");
         return (
+          lettersOnly.includes("sarkariresu") ||
           lower.includes("sarkari result") ||
           lower.includes("channel") ||
           lower.includes("android app") ||
@@ -78,35 +129,77 @@ export async function scrapeHomepageLists(page: Page): Promise<LatestNotificatio
           lower.includes("privacy policy")
         );
       };
+      const staticPageTitles = new Set([
+        "skip to content",
+        "terms and conditions",
+        "disclaimer",
+        "sitemap",
+      ]);
       const isBannerTitle = (title: string) => {
         const lower = title.toLowerCase();
         return Boolean(
           lower &&
+          // Anchors wrapping the logo expose raw markup as their text.
+          !title.startsWith("<") &&
           !navigationTitles.has(lower) &&
-          lower !== "results" &&
-          !allowedTitles.includes(title) &&
+          !staticPageTitles.has(lower) &&
+          !resolveSectionTitle(title) &&
           !isPromotionalTitle(title),
         );
       };
 
-      const findNextNonEmptyIndex = (startIndex: number) => {
-        for (let index = startIndex; index < anchors.length; index += 1) {
-          const anchor = anchors[index];
-          if (anchor?.title) {
-            return index;
+      // Current site layout: Section title → items → "View More" → next section.
+      // Older layout had "View More" immediately after the title; support both.
+      const isContentSectionStart = (index: number) => {
+        const anchor = anchors[index];
+        if (!anchor || !resolveSectionTitle(anchor.title)) {
+          return false;
+        }
+
+        const next = anchors[index + 1];
+        if (!next?.title) {
+          return false;
+        }
+
+        // Nav cluster: section-named links sit next to each other.
+        if (resolveSectionTitle(next.title)) {
+          return false;
+        }
+
+        // Legacy layout: title immediately followed by View More.
+        if (next.title.toLowerCase() === "view more") {
+          return true;
+        }
+
+        // Current layout: title → items → View More → next section.
+        // Require a View More before the next section title so header nav
+        // (e.g. Admission → UP Scholarship → Syllabus) is not treated as content.
+        for (let lookAhead = index + 1; lookAhead < anchors.length; lookAhead += 1) {
+          const candidate = anchors[lookAhead];
+          if (!candidate?.title) {
+            continue;
+          }
+
+          if (candidate.title.toLowerCase() === "view more") {
+            return true;
+          }
+
+          if (resolveSectionTitle(candidate.title)) {
+            return false;
           }
         }
 
-        return -1;
+        return false;
       };
 
-      const firstViewMoreIndex = anchors.findIndex((anchor) => anchor.title.toLowerCase() === "view more");
+      const firstContentSectionIndex = anchors.findIndex((_, index) => isContentSectionStart(index));
       const bannerLinks = anchors
-        .slice(0, firstViewMoreIndex >= 0 ? firstViewMoreIndex : 0)
+        .slice(0, firstContentSectionIndex >= 0 ? firstContentSectionIndex : 0)
         .filter((anchor) => isBannerTitle(anchor.title))
         .map((anchor) => {
           const url = toAbsolute(anchor.href);
-          if (!url || url.endsWith("/#")) {
+          // Root and in-page anchors are navigation, not notifications.
+          if (!url || url.endsWith("/#") || url.includes("#") || url === baseUrl) {
             return null;
           }
 
@@ -123,43 +216,57 @@ export async function scrapeHomepageLists(page: Page): Promise<LatestNotificatio
           continue;
         }
 
-        if (!allowedTitles.includes(current.title) || sections[current.title]) {
+        const sectionTitle = resolveSectionTitle(current.title);
+        if (!sectionTitle || sections[sectionTitle] || !isContentSectionStart(index)) {
           continue;
         }
 
-        const viewMoreIndex = findNextNonEmptyIndex(index + 1);
-        const viewMoreAnchor = viewMoreIndex >= 0 ? anchors[viewMoreIndex] : undefined;
-        if (!viewMoreAnchor || viewMoreAnchor.title.toLowerCase() !== "view more") {
+        const next = anchors[index + 1];
+        if (!next?.title) {
           continue;
         }
 
         const items: Array<{ title: string; url: string }> = [];
+        let viewMoreUrl: string | null = null;
+        let startIndex = index + 1;
 
-        for (let innerIndex = viewMoreIndex + 1; innerIndex < anchors.length; innerIndex += 1) {
-          const next = anchors[innerIndex];
-          if (!next) {
+        // Legacy layout: title, then immediately "View More", then items.
+        if (next.title.toLowerCase() === "view more") {
+          viewMoreUrl = toAbsolute(next.href);
+          startIndex = index + 2;
+        }
+
+        for (let innerIndex = startIndex; innerIndex < anchors.length; innerIndex += 1) {
+          const itemAnchor = anchors[innerIndex];
+          if (!itemAnchor?.title) {
             continue;
           }
 
-          if (allowedTitles.includes(next.title)) {
+          if (itemAnchor.title.toLowerCase() === "view more") {
+            viewMoreUrl = toAbsolute(itemAnchor.href);
+            // Current layout ends the section at View More.
+            if (startIndex === index + 1) {
+              break;
+            }
+            // Legacy layout: View More was already consumed; ignore trailing ones.
+            continue;
+          }
+
+          if (resolveSectionTitle(itemAnchor.title)) {
             break;
           }
 
-          if (!next.title) {
+          if (isPromotionalTitle(itemAnchor.title)) {
             continue;
           }
 
-          if (isPromotionalTitle(next.title)) {
-            continue;
-          }
-
-          const itemUrl = toAbsolute(next.href);
+          const itemUrl = toAbsolute(itemAnchor.href);
           if (!itemUrl) {
             continue;
           }
 
           items.push({
-            title: next.title,
+            title: itemAnchor.title,
             url: itemUrl,
           });
         }
@@ -168,9 +275,9 @@ export async function scrapeHomepageLists(page: Page): Promise<LatestNotificatio
           continue;
         }
 
-        sections[current.title] = {
-          title: current.title,
-          viewMoreUrl: toAbsolute(viewMoreAnchor.href),
+        sections[sectionTitle] = {
+          title: sectionTitle,
+          viewMoreUrl,
           count: items.length,
           items,
         };
@@ -181,7 +288,11 @@ export async function scrapeHomepageLists(page: Page): Promise<LatestNotificatio
         latestSections: sections,
       };
     },
-    { allowedTitles: getHomepageSectionTitles(), baseUrl: TARGET_URL },
+    {
+      allowedTitles: getHomepageSectionTitles(),
+      sectionAliases: SECTION_TITLE_ALIASES,
+      baseUrl: TARGET_URL,
+    },
   );
 
   const normalizedSections: LatestNotificationsResult["latestSections"] = Object.fromEntries(
@@ -198,6 +309,15 @@ export async function scrapeHomepageLists(page: Page): Promise<LatestNotificatio
       },
     ]),
   );
+
+  // Ensure alias titles still map to configured canonical names.
+  for (const [rawName, section] of Object.entries(normalizedSections)) {
+    const canonical = canonicalizeSectionTitle(rawName, getHomepageSectionTitles());
+    if (canonical && canonical !== rawName && !normalizedSections[canonical]) {
+      normalizedSections[canonical] = { ...section, title: canonical };
+      delete normalizedSections[rawName];
+    }
+  }
 
   return {
     scrapedAt: new Date().toISOString(),

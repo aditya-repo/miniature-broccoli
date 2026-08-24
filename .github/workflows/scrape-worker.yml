@@ -1,4 +1,4 @@
-name: Scrape Worker
+name: Sarkari Result Scrape
 
 on:
   workflow_dispatch:
@@ -11,8 +11,8 @@ jobs:
     timeout-minutes: 90
     env:
       MONGODB_URI: ${{ secrets.MONGODB_URI }}
-      SCRAPE_OUTPUT_LOCAL: "false"
-      SCRAPE_OUTPUT_REMOTE: "true"
+      SCRAPE_OUTPUT_LOCAL: "true"
+      SCRAPE_OUTPUT_REMOTE: "false"
       SCRAPE_PARALLEL_WORKERS: "3"
     steps:
       - name: Checkout
@@ -30,8 +30,11 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run scrape worker
-        run: npm run worker
+      - name: Scrape Sarkari Result
+        run: npm run scrape:all
+
+      - name: Push output to MongoDB
+        run: npm run push:db
 
       - name: Upload output artifacts
         if: always()

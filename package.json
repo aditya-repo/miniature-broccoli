@@ -13,7 +13,11 @@
     "scrape:result": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-result-details.ts",
     "scrape:answer-key": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-answer-key-details.ts",
     "scrape:syllabus": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-syllabus-details.ts",
-    "scrape:admission": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-admission-details.ts"
+    "scrape:admission": "node --env-file-if-exists=.env --experimental-strip-types src/cli/scrape-admission-details.ts",
+    "sync:scholarships": "node --env-file-if-exists=.env --experimental-strip-types src/cli/sync-scholarship-details-mongo.ts",
+    "push:db": "node --env-file-if-exists=.env --experimental-strip-types src/cli/push-output-mongo.ts",
+    "scrape:colleges": "node --experimental-strip-types src/cli/scrape-notopedia-college-list.ts",
+    "scrape:college-details": "node --experimental-strip-types src/cli/scrape-notopedia-college-details.ts"
   },
   "keywords": [],
   "author": "",
@@ -22,5 +26,8 @@
   "dependencies": {
     "mongodb": "^6.17.0",
     "playwright": "^1.58.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0"
   }
 }

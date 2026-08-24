@@ -76,7 +76,7 @@ export const SCRAPE_CONFIG: {
       outputFile: "output/banner-link-details.json",
       collectionName: "banner_details",
       manualUrl: "",
-      limit: 25,
+      limit: 50,
     },
     latestJobs: {
       enabled: true,
@@ -85,7 +85,7 @@ export const SCRAPE_CONFIG: {
       outputFile: "output/latest-job-details.json",
       collectionName: "latest_job_details",
       manualUrl: "",
-      limit: 25,
+      limit: 50,
     },
     admitCard: {
       enabled: true,
@@ -94,7 +94,7 @@ export const SCRAPE_CONFIG: {
       outputFile: "output/admit-card-details.json",
       collectionName: "admit_card_details",
       manualUrl: "",
-      limit: 25,
+      limit: 50,
     },
     result: {
       enabled: true,
@@ -103,7 +103,7 @@ export const SCRAPE_CONFIG: {
       outputFile: "output/result-details.json",
       collectionName: "result_details",
       manualUrl: "",
-      limit: 25,
+      limit: 50,
     },
     answerKey: {
       enabled: true,
@@ -112,7 +112,7 @@ export const SCRAPE_CONFIG: {
       outputFile: "output/answer-key-details.json",
       collectionName: "answer_key_details",
       manualUrl: "",
-      limit: 25,
+      limit: 50,
     },
     syllabus: {
       enabled: true,
@@ -121,7 +121,7 @@ export const SCRAPE_CONFIG: {
       outputFile: "output/syllabus-details.json",
       collectionName: "syllabus_details",
       manualUrl: "",
-      limit: 25,
+      limit: 50,
     },
     admission: {
       enabled: true,
@@ -130,7 +130,7 @@ export const SCRAPE_CONFIG: {
       outputFile: "output/admission-details.json",
       collectionName: "admission_details",
       manualUrl: "",
-      limit: 25,
+      limit: 50,
     },
   },
 };

@@ -1,6 +1,12 @@
 import type { Page } from "playwright";
 import { PAGE_SETTLE_DELAY_MS } from "../shared/constants.ts";
-import type { JobDetailResult, KeyValueRow, LinkRow, NotificationItem } from "../shared/types.ts";
+import type {
+  JobDetailResult,
+  KeyValueRow,
+  LinkRow,
+  NotificationItem,
+  VacancyDetailRow,
+} from "../shared/types.ts";
 import { normalizeText, uniqueByKey } from "../shared/utils.ts";
 
 type RawJobDetail = {
@@ -8,17 +14,15 @@ type RawJobDetail = {
   vacancy: string | null;
   postDateOrUpdate: string | null;
   shortInformation: string | null;
-  organization: LinkRow[];
+  organization: string | null;
+  organizationShortName: string | null;
+  organizationConfirmed: boolean;
   importantDates: KeyValueRow[];
   applicationFee: KeyValueRow[];
   ageLimit: KeyValueRow[];
+  vacancyDetails: VacancyDetailRow[];
   howToApply: string[];
   usefulLinks: LinkRow[];
-};
-
-type UsefulLinkRow = {
-  label: string;
-  valueCell: Element | null;
 };
 
 export async function scrapeJobDetail(page: Page, item: NotificationItem): Promise<JobDetailResult> {
@@ -40,37 +44,42 @@ export async function scrapeJobDetail(page: Page, item: NotificationItem): Promi
 
   const extracted = await page.evaluate((): RawJobDetail => {
     const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
-    const buildLinkTitle = (titles: string[]) => {
-      const cleanedTitles = titles
-        .map((title) => normalize(title))
-        .filter((title) => title && title.toLowerCase() !== "click here");
 
-      if (cleanedTitles.length === 0) {
-        return null;
+    const PROMO_PATTERNS = [
+      /join us/gi,
+      /instagram follow/gi,
+      /\bx follow\b/gi,
+      /discover more/gi,
+      /sarkari result[®\s]*(official)?/gi,
+      /sarkariresult\.com/gi,
+      /download the sarkari result[\s\S]*$/gi,
+    ];
+
+    const stripPromo = (value: string) => {
+      let output = value;
+      for (const pattern of PROMO_PATTERNS) {
+        output = output.replace(pattern, " ");
       }
-
-      return cleanedTitles.join(" | ");
+      return normalize(output);
     };
-    const removeBrandingNoise = (value: string) =>
-      value
-        .split(/\n+/)
-        .map((line) => line.trim())
-        .filter((line) => {
-          const lower = line.toLowerCase();
-          return !(
-            lower.includes("sarkari result") ||
-            lower.includes("sarkariresult.com") ||
-            lower.includes("join") && lower.includes("channel") ||
-            lower.includes("android app") ||
-            lower.includes("apple ios app") ||
-            lower.includes("telegram") ||
-            lower.includes("whatsapp") ||
-            lower.includes("registered trademark") ||
-            lower.includes("intellectual property india") ||
-            lower.includes("feedback / advertising")
-          );
-        })
-        .join("\n");
+
+    const isPromoText = (value: string) => {
+      const lower = value.toLowerCase();
+      return (
+        lower.includes("sarkari result") ||
+        lower.includes("sarkariresult.com") ||
+        lower.includes("android app") ||
+        lower.includes("apple ios app") ||
+        lower.includes("telegram") ||
+        lower.includes("whatsapp") ||
+        lower.includes("instagram") ||
+        lower.includes("registered trademark") ||
+        lower.includes("intellectual property india") ||
+        lower.includes("feedback / advertising") ||
+        (lower.includes("join") && lower.includes("channel"))
+      );
+    };
+
     const toAbsoluteUrl = (href: string | null) => {
       if (!href) {
         return null;
@@ -83,125 +92,24 @@ export async function scrapeJobDetail(page: Page, item: NotificationItem): Promi
       }
     };
 
-    const bodyText = normalize(
-      removeBrandingNoise(
-        (document.body.innerText || "")
-        .replace(/\(adsbygoogle\s*=\s*window\.adsbygoogle\s*\|\|\s*\[\]\)\.push\(\{\}\);?/gi, " ")
-        .replace(/\(function\(v,d,o,ai\)\{[\s\S]*?\}\)\(window,\s*document,[\s\S]*?\);?/gi, " "),
-      ),
-    );
+    const buildLinkTitle = (titles: string[]) => {
+      const cleanedTitles = titles
+        .map((title) => normalize(title))
+        .filter((title) => title && title.toLowerCase() !== "click here");
 
-    const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const buildBoundary = (labels: string[]) => labels.map(escapeRegex).join("|");
-
-    const extractSingleValue = (label: string, nextLabels: string[]) => {
-      const regex = new RegExp(
-        `${escapeRegex(label)}\\s*:?\\s*([\\s\\S]*?)(?=(?:${buildBoundary(nextLabels)})\\s*:|$)`,
-        "i",
-      );
-      const match = bodyText.match(regex);
-      return match?.[1] ? normalize(match[1]) : null;
+      return cleanedTitles.length > 0 ? cleanedTitles.join(" | ") : null;
     };
 
-    const extractSection = (startLabels: string[], endLabels: string[]) => {
-      const regex = new RegExp(
-        `(?:${buildBoundary(startLabels)})\\s*:?\\s*([\\s\\S]*?)(?=(?:${buildBoundary(endLabels)})\\s*:|$)`,
-        "i",
-      );
-      const match = bodyText.match(regex);
-      return match?.[1] ? normalize(match[1]) : "";
-    };
+    const stripTrailingColon = (value: string) => value.replace(/\s*:\s*$/, "").trim();
 
-    const getListItemsForHeading = (matcher: (text: string) => boolean) => {
-      const headings = Array.from(document.querySelectorAll("td, th, b, strong, h1, h2, h3, h4, div, span"));
-
-      for (const heading of headings) {
-        const text = normalize(heading.textContent || "");
-        if (!matcher(text.toLowerCase())) {
-          continue;
-        }
-
-        const nearestCell = heading.closest("td, th");
-        if (nearestCell) {
-          const cellItems = Array.from(nearestCell.querySelectorAll("li"))
-            .map((item) => normalize(item.textContent || ""))
-            .filter(Boolean);
-
-          if (cellItems.length > 0) {
-            return cellItems;
-          }
-        }
-
-        let sibling: Element | null = heading.nextElementSibling;
-        while (sibling) {
-          const siblingItems = Array.from(sibling.querySelectorAll("li"))
-            .map((item) => normalize(item.textContent || ""))
-            .filter(Boolean);
-
-          if (siblingItems.length > 0) {
-            return siblingItems;
-          }
-
-          sibling = sibling.nextElementSibling;
-        }
-
-        let container: Element | null = heading.parentElement;
-        while (container) {
-          const directLists = Array.from(container.children)
-            .flatMap((child) => Array.from(child.querySelectorAll("li")))
-            .map((item) => normalize(item.textContent || ""))
-            .filter(Boolean);
-
-          if (directLists.length > 0) {
-            return directLists;
-          }
-
-          container = container.parentElement;
-        }
-      }
-
-      return [] as string[];
-    };
-
-    const parseKeyValueBlock = (text: string) =>
-      Array.from(
-        text.matchAll(/([A-Za-z][A-Za-z /()]+?)\s*:\s*([^:]+?)(?=\s+[A-Za-z][A-Za-z /()]+?\s*:|$)/g),
-      )
-        .map((match) => ({
-          label: normalize(match[1] || ""),
-          value: normalize(match[2] || ""),
-        }))
-        .filter((item) => item.label && item.value);
-
-    const parseListKeyValueBlock = (items: string[]) =>
-      items
-        .map((item) => {
-          const match = item.match(/^(.+?)\s*:\s*(.+)$/);
-          const label = match?.[1];
-          const value = match?.[2];
-          if (!label || !value) {
-            return null;
-          }
-
-          return {
-            label: normalize(label),
-            value: normalize(value),
-          };
-        })
-        .filter((item): item is KeyValueRow => Boolean(item));
-
-    const parseHowToApply = (text: string) =>
-      text
-        .split(/\.\s+|\s(?=First:)|\s(?=Second\s*:)|\s(?=Kindly )|\s(?=Before Apply)|\s(?=Take A Print)/)
-        .map((item) => normalize(item))
-        .filter((item) => item.length > 10);
-
-    const getLabeledValueCell = (labelText: string) => {
+    /** Info table is a two-column `label | value` grid at the top of the page. */
+    const getInfoValueCell = (labelVariants: string[]) => {
+      const wanted = labelVariants.map((variant) => variant.toLowerCase());
       const cells = Array.from(document.querySelectorAll("td, th"));
 
       for (const cell of cells) {
-        const text = normalize(cell.textContent || "").toLowerCase();
-        if (!text.startsWith(labelText.toLowerCase())) {
+        const label = stripTrailingColon(normalize(cell.textContent || "")).toLowerCase();
+        if (!wanted.includes(label)) {
           continue;
         }
 
@@ -211,12 +119,8 @@ export async function scrapeJobDetail(page: Page, item: NotificationItem): Promi
         }
 
         const rowCells = Array.from(row.querySelectorAll("td, th"));
-        const cellIndex = rowCells.indexOf(cell);
-        if (cellIndex === -1 || rowCells.length <= cellIndex + 1) {
-          continue;
-        }
-
-        const valueCell = rowCells[cellIndex + 1];
+        const index = rowCells.indexOf(cell);
+        const valueCell = index >= 0 ? rowCells[index + 1] : undefined;
         if (valueCell) {
           return valueCell;
         }
@@ -225,163 +129,457 @@ export async function scrapeJobDetail(page: Page, item: NotificationItem): Promi
       return null;
     };
 
-    const getUsefulLinkRows = () => {
+    const getInfoValue = (labelVariants: string[]) => {
+      const cell = getInfoValueCell(labelVariants);
+      if (!cell) {
+        return null;
+      }
+
+      const text = normalize(cell.textContent || "");
+      return text || null;
+    };
+
+    /**
+     * Section content lives in a table cell introduced by a short heading
+     * (e.g. "Important Dates", "... : Age Limit"). Headings are matched before
+     * bold text so a bolded label inside a list cannot hijack the section.
+     */
+    const findSectionCell = (matcher: (text: string) => boolean) => {
+      const passes = [
+        Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6")),
+        Array.from(document.querySelectorAll("b, strong")),
+      ];
+
+      for (const candidates of passes) {
+        for (const candidate of candidates) {
+          const text = normalize(candidate.textContent || "");
+          if (!text || text.length > 160) {
+            continue;
+          }
+
+          if (!matcher(text.toLowerCase())) {
+            continue;
+          }
+
+          const cell = candidate.closest("td, th");
+          if (cell) {
+            return cell;
+          }
+        }
+      }
+
+      return null;
+    };
+
+    const findHeadingText = (matcher: (text: string) => boolean) => {
+      const candidates = Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6, b, strong, td, th"));
+
+      for (const candidate of candidates) {
+        const text = normalize(candidate.textContent || "");
+        if (text && text.length <= 200 && matcher(text.toLowerCase())) {
+          return text;
+        }
+      }
+
+      return null;
+    };
+
+    const getCellListItems = (cell: Element | null) =>
+      cell
+        ? Array.from(cell.querySelectorAll("li"))
+            .map((listItem) => normalize(listItem.textContent || ""))
+            .filter(Boolean)
+        : [];
+
+    /**
+     * Splits `Label : Value` list items, carrying group headers
+     * (e.g. "For Group A :") into following labels so repeated
+     * fee/date labels stay distinguishable.
+     */
+    const parseKeyValueItems = (items: string[]): KeyValueRow[] => {
+      const rows: KeyValueRow[] = [];
+      let group: string | null = null;
+
+      for (const item of items) {
+        if (isPromoText(item)) {
+          continue;
+        }
+
+        const match = item.match(/^(.+?)\s*:\s*(.+)$/);
+        const label = match?.[1] ? normalize(match[1]) : "";
+        const value = match?.[2] ? normalize(match[2]) : "";
+
+        if (!label || !value) {
+          const header = stripTrailingColon(item);
+          // A colon-terminated item without a value introduces a group.
+          if (/:\s*$/.test(item) && header && header.length <= 80) {
+            group = header;
+          }
+          continue;
+        }
+
+        rows.push({
+          label: group ? `${group} - ${label}` : label,
+          value,
+        });
+      }
+
+      return rows;
+    };
+
+    /** Fallback for sections rendered as prose instead of a list. */
+    const parseKeyValueText = (text: string): KeyValueRow[] =>
+      Array.from(
+        text.matchAll(/([A-Za-z][A-Za-z /()]+?)\s*:\s*([^:]+?)(?=\s+[A-Za-z][A-Za-z /()]+?\s*:|$)/g),
+      )
+        .map((match) => ({
+          label: normalize(match[1] || ""),
+          value: normalize(match[2] || ""),
+        }))
+        .filter((row) => row.label && row.value && !isPromoText(row.label));
+
+    const getSectionRows = (matcher: (text: string) => boolean, headingMatcher: (text: string) => boolean) => {
+      const cell = findSectionCell(matcher);
+      const listItems = getCellListItems(cell);
+      if (listItems.length > 0) {
+        return parseKeyValueItems(listItems);
+      }
+
+      if (!cell) {
+        return [] as KeyValueRow[];
+      }
+
+      // Drop the heading itself before parsing the remaining prose.
+      const cellText = normalize(cell.textContent || "");
+      const heading = Array.from(cell.querySelectorAll("h1, h2, h3, h4, h5, h6, b, strong")).find((element) =>
+        headingMatcher(normalize(element.textContent || "").toLowerCase()),
+      );
+      const headingText = heading ? normalize(heading.textContent || "") : "";
+      const body = headingText && cellText.startsWith(headingText)
+        ? cellText.slice(headingText.length)
+        : cellText;
+
+      return parseKeyValueText(body);
+    };
+
+    const isImportantDatesHeading = (text: string) => {
+      const cleaned = stripTrailingColon(text);
+      return cleaned.endsWith("important dates") || cleaned.endsWith("important date");
+    };
+    const isApplicationFeeHeading = (text: string) => text.includes("application fee");
+    const isAgeLimitHeading = (text: string) => text.includes("age limit");
+    const isHowToApplyHeading = (text: string) =>
+      text.includes("how to fill") || text.includes("how to apply") || text.includes("how to online form");
+
+    const nameOfPost =
+      getInfoValue(["name of post", "name of the post"]) ||
+      normalize(document.querySelector("h1")?.textContent || "") ||
+      null;
+
+    const postDateOrUpdate = getInfoValue([
+      "post date / update",
+      "post date/update",
+      "post date / updated",
+      "post date",
+      "post update",
+    ]);
+
+    const shortInformationCell = getInfoValueCell(["short information", "short info", "short details"]);
+    const shortInformation = shortInformationCell
+      ? stripPromo(normalize(shortInformationCell.textContent || "")) || null
+      : null;
+
+    /**
+     * The organization is published twice: as the leading "Full Name (SHORT)"
+     * phrase of Short Information, and as the first heading of the content
+     * table. Comparing both guards against picking up an unrelated heading.
+     * Brackets are optional in prose ("National Testing Agency NTA"), so the
+     * comparison key drops punctuation entirely.
+     */
+    const organizationKey = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+
+    /** "(CCRUM)" is an abbreviation; "(Graduate)" is part of a post name. */
+    const isAbbreviation = (value: string) => {
+      const letters = value.replace(/[^A-Za-z]/g, "");
+      if (letters.length < 2) {
+        return false;
+      }
+
+      const upperCount = value.replace(/[^A-Z]/g, "").length;
+      return upperCount / letters.length >= 0.6;
+    };
+
+    const bracketAbbreviation = (value: string) => {
+      const inner = normalize(value.match(/\(\s*([^)]{1,30})\s*\)\s*$/)?.[1] || "");
+      return inner && isAbbreviation(inner) ? inner : null;
+    };
+
+    // The first non-branding <h2> is the organization row of the content table.
+    const organizationFromTable =
+      Array.from(document.querySelectorAll("h2"))
+        .map((heading) => normalize(heading.textContent || ""))
+        .find((text) => text && text.length <= 150 && !isPromoText(text) && !/^www\./i.test(text)) || null;
+
+    const organizationFromShortInfo = (() => {
+      if (!shortInformation) {
+        return null;
+      }
+
+      const match = shortInformation.match(/^(.{3,140}?)\s*\(\s*([A-Za-z][A-Za-z0-9&.\/\- ]{1,25})\s*\)/);
+      const name = match?.[1] ? normalize(match[1]) : "";
+      const shortName = match?.[2] ? normalize(match[2]) : "";
+      // Guard against trailing post-name brackets such as "... (Graduate)".
+      return name && shortName && isAbbreviation(shortName) ? `${name} (${shortName})` : null;
+    })();
+
+    const organizationIsConfirmed = (() => {
+      if (!organizationFromTable || !shortInformation) {
+        return false;
+      }
+
+      const tableKey = organizationKey(organizationFromTable);
+      if (tableKey && organizationKey(shortInformation).includes(tableKey)) {
+        return true;
+      }
+
+      // Prose often drops the brackets, leaving only the abbreviation.
+      const abbreviation = bracketAbbreviation(organizationFromTable);
+      return Boolean(
+        abbreviation && new RegExp(`\\b${abbreviation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(shortInformation),
+      );
+    })();
+
+    // The table heading is the dedicated organization row, so it wins unless absent.
+    const organization = organizationFromTable || organizationFromShortInfo || null;
+    const organizationShortName = organization ? bracketAbbreviation(organization) : null;
+
+    const importantDates = getSectionRows(isImportantDatesHeading, isImportantDatesHeading);
+    const applicationFee = getSectionRows(isApplicationFeeHeading, isApplicationFeeHeading);
+    const ageLimit = getSectionRows(isAgeLimitHeading, isAgeLimitHeading);
+
+    const howToApplyCell = findSectionCell(isHowToApplyHeading);
+    const howToApplyItems = getCellListItems(howToApplyCell);
+    const howToApply = (howToApplyItems.length > 0
+      ? howToApplyItems
+      : normalize(howToApplyCell?.textContent || "")
+          .split(/(?<=\.)\s+/)
+          .map((sentence) => normalize(sentence)))
+      .filter((entry) => entry.length > 10 && !isPromoText(entry) && !isHowToApplyHeading(entry.toLowerCase()));
+
+    /** Vacancy grid: `Post Name | Total Post | Eligibility`, with group header rows. */
+    const getVacancyDetails = (): VacancyDetailRow[] => {
+      // The first column label varies by section (Post / Exam / Course / Trade name).
+      const isNameColumn = (text: string) =>
+        /^(post|exam|course|trade|subject|branch|category|group)\s*name$/.test(text) ||
+        text === "name of post" ||
+        text === "name of the post";
+      const isCountColumn = (text: string) =>
+        text.startsWith("total post") ||
+        text.startsWith("no of post") ||
+        text.startsWith("no. of post") ||
+        text === "total" ||
+        text === "total seats" ||
+        text === "seats";
+
+      const headerRow = Array.from(document.querySelectorAll("tr")).find((row) => {
+        const cells = Array.from(row.cells).map((cell) => normalize(cell.textContent || "").toLowerCase());
+        return cells.length >= 2 && cells.some(isNameColumn) && cells.some(isCountColumn);
+      });
+
+      if (!headerRow) {
+        return [];
+      }
+
+      const isStopRow = (text: string) =>
+        isHowToApplyHeading(text) ||
+        text.includes("some useful important links") ||
+        text.includes("interested candidates can read");
+
+      const rows: VacancyDetailRow[] = [];
+      let group: string | null = null;
+      let current: Element | null = headerRow.nextElementSibling;
+
+      while (current) {
+        const cells = Array.from((current as HTMLTableRowElement).cells || []);
+        const rowText = normalize(current.textContent || "");
+        const lowerRowText = rowText.toLowerCase();
+
+        if (isStopRow(lowerRowText)) {
+          break;
+        }
+
+        if (cells.length === 1) {
+          // Short single-cell rows are group headers; long ones start a new section.
+          if (rowText.length > 120 || isPromoText(rowText)) {
+            break;
+          }
+
+          group = rowText || group;
+          current = current.nextElementSibling;
+          continue;
+        }
+
+        const postName = normalize(cells[0]?.textContent || "");
+        const totalPost = normalize(cells[1]?.textContent || "") || null;
+        const eligibilityCell = cells[2] ?? null;
+        const eligibility = getCellListItems(eligibilityCell);
+
+        // Link rows ("Apply Online | Click Here") mean the grid has ended.
+        if (cells[1]?.querySelector("a[href]") && /^(click here|download|apply online)/i.test(totalPost || "")) {
+          break;
+        }
+
+        if (postName && !isPromoText(postName)) {
+          rows.push({
+            group,
+            postName,
+            totalPost,
+            eligibility:
+              eligibility.length > 0
+                ? eligibility
+                : [normalize(eligibilityCell?.textContent || "")].filter(Boolean),
+          });
+        }
+
+        current = current.nextElementSibling;
+      }
+
+      return rows;
+    };
+
+    const vacancyDetails = getVacancyDetails();
+
+    const getUsefulLinks = (): LinkRow[] => {
       const cells = Array.from(document.querySelectorAll("td, th"));
       const startCell = cells.find(
         (cell) => normalize(cell.textContent || "").toLowerCase() === "some useful important links",
       );
 
       if (!startCell) {
-        return [] as UsefulLinkRow[];
+        return [];
       }
 
-      const startRow = startCell.closest("tr");
-      let currentRow: Element | null = startRow ? startRow.nextElementSibling : null;
-      const rows: UsefulLinkRow[] = [];
+      const links: LinkRow[] = [];
+      let current: Element | null = startCell.closest("tr")?.nextElementSibling ?? null;
 
-      while (currentRow) {
-        const rowCells = Array.from(currentRow.querySelectorAll("td, th"));
+      while (current) {
+        const rowCells = Array.from(current.querySelectorAll("td, th"));
         if (rowCells.length < 2) {
           break;
         }
 
-        const labelCell = rowCells[0];
+        const label = normalize(rowCells[0]?.textContent || "");
         const valueCell = rowCells[1];
-        if (!labelCell || !valueCell) {
-          currentRow = currentRow.nextElementSibling;
+        if (!label || !valueCell) {
+          current = current.nextElementSibling;
           continue;
         }
 
-        const label = normalize(labelCell.textContent || "");
-        if (!label) {
-          currentRow = currentRow.nextElementSibling;
-          continue;
-        }
-
-        rows.push({
-          label,
-          valueCell,
-        });
-
-        currentRow = currentRow.nextElementSibling;
-      }
-
-      return rows;
-    };
-
-    const shortInformation =
-      extractSingleValue("Short Information", [
-        "Important Dates",
-        "Application Fee",
-        "Age Limit",
-        "How to Fill",
-        "How to Apply",
-        "Some Useful Important Links",
-      ]) || null;
-
-    const shortInformationValueCell = getLabeledValueCell("Short Information");
-    const organization = shortInformationValueCell
-      ? Array.from(shortInformationValueCell.querySelectorAll("a[href]"))
-          .map((anchor) => {
-            const label = normalize(anchor.textContent || "");
-            const url = toAbsoluteUrl(anchor.getAttribute("href"));
-            if (!label || !url) {
-              return null;
-            }
-
-            const lowerLabel = label.toLowerCase();
-            if (
-              lowerLabel === "home" ||
-              lowerLabel === "result" ||
-              lowerLabel === "admit card" ||
-              lowerLabel.includes("android apps") ||
-              lowerLabel.includes("apple ios apps")
-            ) {
-              return null;
-            }
-
-            return { label, url };
-          })
-          .filter((item): item is LinkRow => Boolean(item))
-      : [];
-
-    const importantDatesList = getListItemsForHeading(
-      (text) => text === "important dates" || text === "important date",
-    );
-    const applicationFeeList = getListItemsForHeading((text) => text === "application fee");
-    const ageLimitList = getListItemsForHeading((text) => text.includes("age limit"));
-
-    const importantDatesText = extractSection(
-      ["Important Dates"],
-      ["Application Fee", "Age Limit", "How to Fill", "How to Apply", "Some Useful Important Links"],
-    );
-    const applicationFeeText = extractSection(
-      ["Application Fee"],
-      ["Age Limit", "How to Fill", "How to Apply", "Some Useful Important Links"],
-    );
-    const ageLimitText = extractSection(
-      ["Age Limit", "Age Limit as on", "Age Limit as On"],
-      ["How to Fill", "How to Apply", "Some Useful Important Links"],
-    );
-    const howToApplyText = extractSection(
-      ["How to Fill", "How to Apply"],
-      ["Interested Candidates Can Read", "Some Useful Important Links", "Download SarkariResult.Com Official Mobile Apps"],
-    );
-
-    const usefulLinks = getUsefulLinkRows()
-      .map((row) => {
-        const lowerLabel = row.label.toLowerCase();
-        if (!row.valueCell) {
-          return null;
-        }
-
-        if (
-          lowerLabel.includes("join") && lowerLabel.includes("channel") ||
+        const lowerLabel = label.toLowerCase();
+        const isNoise =
+          (lowerLabel.includes("join") && lowerLabel.includes("channel")) ||
           lowerLabel.includes("portal") ||
           lowerLabel.includes("resume cv maker") ||
           lowerLabel.includes("image resizer") ||
           lowerLabel.includes("jpg to pdf") ||
           lowerLabel.includes("typing test practice") ||
           lowerLabel.includes("android app") ||
-          lowerLabel.includes("apple ios app")
-        ) {
-          return null;
+          lowerLabel.includes("apple ios app");
+
+        if (isNoise) {
+          current = current.nextElementSibling;
+          continue;
         }
 
-        const urls = Array.from(row.valueCell.querySelectorAll("a[href]"))
+        const urls = Array.from(valueCell.querySelectorAll("a[href]"))
           .map((anchor) => ({
             text: normalize(anchor.textContent || ""),
             url: toAbsoluteUrl(anchor.getAttribute("href")),
           }))
           .filter((entry): entry is { text: string; url: string } => Boolean(entry.text && entry.url));
 
-        if (urls.length === 0) {
-          return null;
+        if (urls.length > 0) {
+          links.push({
+            label,
+            linkTitle: buildLinkTitle(urls.map((entry) => entry.text)),
+            url: urls.map((entry) => entry.url).join(" | "),
+          });
         }
 
-        return {
-          label: row.label,
-          linkTitle: buildLinkTitle(urls.map((entry) => entry.text)),
-          url: urls.map((entry) => entry.url).join(" | "),
-        };
-      })
-      .filter((item): item is LinkRow => Boolean(item));
+        current = current.nextElementSibling;
+      }
 
-    const vacancyMatch = bodyText.match(/vacancy details total\s*:\s*(\d+)\s*post/i);
+      return links;
+    };
+
+    const extractVacancyTotal = () => {
+      const vacancyHeading = findHeadingText(
+        (text) => text.includes("vacancy details") || /total\s*:?\s*[\d,]+\s*post/i.test(text),
+      );
+
+      // Explicit totals are safe to read from anywhere on the page.
+      const explicitPatterns = [
+        /vacancy details\s*total\s*:?\s*([\d,]+)/i,
+        /total\s*:?\s*([\d,]+)\s*posts?\b/i,
+        /total posts?\s*:?\s*([\d,]+)/i,
+      ];
+      // A bare "N Post" is only trustworthy inside a vacancy heading or title.
+      const loosePatterns = [/for\s+([\d,]+)\s+posts?\b/i, /([\d,]+)\s+posts?\b/i];
+
+      const readTotal = (source: string, patterns: RegExp[]) => {
+        for (const pattern of patterns) {
+          const match = source.match(pattern);
+          const value = match?.[1]?.replace(/,/g, "");
+          if (value && Number(value) > 0) {
+            return value;
+          }
+        }
+
+        return null;
+      };
+
+      const bodyText = normalize(document.body?.innerText || "");
+      for (const source of [vacancyHeading, nameOfPost, bodyText]) {
+        const total = source ? readTotal(source, explicitPatterns) : null;
+        if (total) {
+          return total;
+        }
+      }
+
+      for (const source of [vacancyHeading, nameOfPost]) {
+        const total = source ? readTotal(source, loosePatterns) : null;
+        if (total) {
+          return total;
+        }
+      }
+
+      // Sum the vacancy grid when no explicit total is published.
+      const summed = vacancyDetails
+        .map((row) => Number((row.totalPost || "").replace(/[^\d]/g, "")))
+        .filter((count) => Number.isFinite(count) && count > 0)
+        .reduce((total, count) => total + count, 0);
+
+      return summed > 0 ? String(summed) : null;
+    };
 
     return {
-      nameOfPost: extractSingleValue("Name of Post", ["Post Date / Update", "Short Information"]),
-      vacancy: vacancyMatch?.[1] || null,
-      postDateOrUpdate: extractSingleValue("Post Date / Update", ["Short Information", "Important Dates"]),
+      nameOfPost,
+      vacancy: extractVacancyTotal(),
+      postDateOrUpdate,
       shortInformation,
       organization,
-      importantDates:
-        importantDatesList.length > 0 ? parseListKeyValueBlock(importantDatesList) : parseKeyValueBlock(importantDatesText),
-      applicationFee:
-        applicationFeeList.length > 0 ? parseListKeyValueBlock(applicationFeeList) : parseKeyValueBlock(applicationFeeText),
-      ageLimit: ageLimitList.length > 0 ? parseListKeyValueBlock(ageLimitList) : parseKeyValueBlock(ageLimitText),
-      howToApply: parseHowToApply(howToApplyText),
-      usefulLinks,
+      organizationShortName,
+      organizationConfirmed: organizationIsConfirmed,
+      importantDates,
+      applicationFee,
+      ageLimit,
+      vacancyDetails,
+      howToApply,
+      usefulLinks: getUsefulLinks(),
     };
   });
 
@@ -393,20 +591,23 @@ export async function scrapeJobDetail(page: Page, item: NotificationItem): Promi
     vacancy: normalizeNullableText(extracted.vacancy),
     postDateOrUpdate: normalizeNullableText(extracted.postDateOrUpdate),
     shortInformation: normalizeNullableText(extracted.shortInformation),
-    organization: normalizeLinkRows(extracted.organization),
+    organization: normalizeNullableText(extracted.organization),
+    organizationShortName: normalizeNullableText(extracted.organizationShortName),
+    organizationConfirmed: extracted.organizationConfirmed,
     importantDates: normalizeKeyValueRows(extracted.importantDates),
     applicationFee: normalizeKeyValueRows(extracted.applicationFee),
     ageLimit: normalizeAgeLimitRows(extracted.ageLimit),
+    vacancyDetails: normalizeVacancyRows(extracted.vacancyDetails),
     howToApply: uniqueByKey(
-      extracted.howToApply.map((item) => normalizeText(item)),
-      (item) => item,
+      extracted.howToApply.map((entry) => normalizeText(entry)),
+      (entry) => entry,
     ),
     usefulLinks: normalizeLinkRows(extracted.usefulLinks),
   };
 }
 
 function normalizeNullableText(value: string | null): string | null {
-  return value ? normalizeText(value) : null;
+  return value ? normalizeText(value) || null : null;
 }
 
 function isDirectDownloadUrl(url: string): boolean {
@@ -427,10 +628,13 @@ function createDirectDownloadDetail(item: NotificationItem): JobDetailResult {
     vacancy: null,
     postDateOrUpdate: null,
     shortInformation: null,
-    organization: [],
+    organization: null,
+    organizationShortName: null,
+    organizationConfirmed: false,
     importantDates: [],
     applicationFee: [],
     ageLimit: [],
+    vacancyDetails: [],
     howToApply: [],
     usefulLinks: [
       {
@@ -453,18 +657,24 @@ function normalizeKeyValueRows(rows: KeyValueRow[]): KeyValueRow[] {
 }
 
 function normalizeAgeLimitRows(rows: KeyValueRow[]): KeyValueRow[] {
-  const normalizedRows = normalizeKeyValueRows(rows);
-
-  return normalizedRows.filter((row) => {
+  return normalizeKeyValueRows(rows).filter((row) => {
     const label = row.label.toLowerCase();
     const value = row.value.toLowerCase();
 
-    return (
-      label.includes("age") ||
-      value.includes("year") ||
-      value.includes("years")
-    );
+    return label.includes("age") || value.includes("year");
   });
+}
+
+function normalizeVacancyRows(rows: VacancyDetailRow[]): VacancyDetailRow[] {
+  return uniqueByKey(
+    rows.map((row) => ({
+      group: row.group ? normalizeText(row.group) : null,
+      postName: normalizeText(row.postName),
+      totalPost: row.totalPost ? normalizeText(row.totalPost) : null,
+      eligibility: row.eligibility.map((entry) => normalizeText(entry)).filter(Boolean),
+    })),
+    (row) => `${row.group || ""}::${row.postName}::${row.totalPost || ""}`,
+  );
 }
 
 function normalizeLinkRows(rows: LinkRow[]): LinkRow[] {

@@ -29,6 +29,13 @@ export type LinkRow = {
   linkTitle?: string | null;
 };
 
+export type VacancyDetailRow = {
+  group: string | null;
+  postName: string;
+  totalPost: string | null;
+  eligibility: string[];
+};
+
 export type JobDetailResult = {
   listTitle: string;
   listUrl: string;
@@ -37,10 +44,14 @@ export type JobDetailResult = {
   vacancy: string | null;
   postDateOrUpdate: string | null;
   shortInformation: string | null;
-  organization: LinkRow[];
+  organization: string | null;
+  organizationShortName: string | null;
+  /** True when Short Information and the content table agree on the organization. */
+  organizationConfirmed: boolean;
   importantDates: KeyValueRow[];
   applicationFee: KeyValueRow[];
   ageLimit: KeyValueRow[];
+  vacancyDetails: VacancyDetailRow[];
   howToApply: string[];
   usefulLinks: LinkRow[];
 };

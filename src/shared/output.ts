@@ -1,3 +1,4 @@
+import "./prefers-public-dns.ts";
 import { SCRAPE_CONFIG } from "../config/scrape-config.ts";
 import { writeJsonFile } from "./files.ts";
 
@@ -16,15 +17,15 @@ export async function saveOutput(options: SaveOutputOptions): Promise<void> {
   }
 
   if (SCRAPE_CONFIG.output.remote) {
-    await saveOutputToMongo(options);
+    await pushOutputToMongo(options);
   }
 }
 
-async function saveOutputToMongo(options: SaveOutputOptions): Promise<void> {
+/** Push already-scraped JSON to MongoDB (clears collection, then insertMany). */
+export async function pushOutputToMongo(options: SaveOutputOptions): Promise<number> {
   const mongoUri = process.env[SCRAPE_CONFIG.output.mongoUriEnvVar];
   if (!mongoUri) {
-    console.log(`DB not found: ${SCRAPE_CONFIG.output.mongoUriEnvVar} is missing`);
-    return;
+    throw new Error(`DB not found: ${SCRAPE_CONFIG.output.mongoUriEnvVar} is missing`);
   }
 
   let mongodbModule: typeof import("mongodb");
@@ -32,13 +33,12 @@ async function saveOutputToMongo(options: SaveOutputOptions): Promise<void> {
   try {
     mongodbModule = await import("mongodb");
   } catch {
-    console.log("DB not found: mongodb package is not installed");
-    return;
+    throw new Error("DB not found: mongodb package is not installed");
   }
 
   const documents = buildMongoDocuments(options.label, options.data);
   if (documents.length === 0) {
-    return;
+    return 0;
   }
 
   const client = new mongodbModule.MongoClient(mongoUri);
@@ -52,6 +52,8 @@ async function saveOutputToMongo(options: SaveOutputOptions): Promise<void> {
   } finally {
     await client.close();
   }
+
+  return documents.length;
 }
 
 function buildMongoDocuments(label: string, data: unknown): InsertableDocument[] {
