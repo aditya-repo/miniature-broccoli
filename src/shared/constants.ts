@@ -24,7 +24,8 @@ export const MANUAL_SYLLABUS_URL = "";
 export const MANUAL_ADMISSION_URL = "";
 export const MANUAL_BANNER_URL = "";
 export const DEFAULT_TIMEOUT_MS = 60_000;
-export const PAGE_SETTLE_DELAY_MS = 1_500;
+export const PAGE_SETTLE_DELAY_MS =
+  process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3_000 : 1_500;
 export const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 

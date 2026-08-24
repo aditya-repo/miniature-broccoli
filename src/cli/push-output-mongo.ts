@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import "../shared/prefers-public-dns.ts";
 import * as fs from "node:fs/promises";
 import { SCRAPE_CONFIG } from "../config/scrape-config.ts";
 import { readJsonFile } from "../shared/files.ts";
@@ -45,6 +46,13 @@ async function fileExists(filePath: string): Promise<boolean> {
 }
 
 export async function main(): Promise<void> {
+  const mongoUri = process.env[SCRAPE_CONFIG.output.mongoUriEnvVar];
+  if (!mongoUri) {
+    throw new Error(
+      `${SCRAPE_CONFIG.output.mongoUriEnvVar} is not set. Add it as a GitHub Actions secret (Settings → Secrets and variables → Actions).`,
+    );
+  }
+
   const targets = getPushTargets();
   let pushed = 0;
   let skipped = 0;

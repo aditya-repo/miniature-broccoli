@@ -13,7 +13,7 @@ jobs:
       MONGODB_URI: ${{ secrets.MONGODB_URI }}
       SCRAPE_OUTPUT_LOCAL: "true"
       SCRAPE_OUTPUT_REMOTE: "false"
-      SCRAPE_PARALLEL_WORKERS: "3"
+      SCRAPE_PARALLEL_WORKERS: "2"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,13 +25,33 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
       - name: Scrape Sarkari Result
         run: npm run scrape:all
+
+      - name: Verify scrape output
+        run: |
+          node --experimental-strip-types -e "
+          import fs from 'node:fs';
+          const data = JSON.parse(fs.readFileSync('output/latest-notifications.json', 'utf8'));
+          console.log('Homepage sections:', data.sectionCount);
+          console.log('Banner links:', data.bannerLinks?.length ?? 0);
+          console.log('Section keys:', Object.keys(data.latestSections ?? {}).join(', '));
+          if (!data.sectionCount) {
+            throw new Error('Homepage scrape returned 0 sections.');
+          }
+          "
+
+      - name: Check MongoDB secret
+        run: |
+          if [ -z "$MONGODB_URI" ]; then
+            echo "::error::MONGODB_URI secret is missing. Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
 
       - name: Push output to MongoDB
         run: npm run push:db

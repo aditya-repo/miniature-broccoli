@@ -49,6 +49,15 @@ export async function pushOutputToMongo(options: SaveOutputOptions): Promise<num
     const collection = db.collection(options.collectionName);
     await collection.deleteMany({});
     await collection.insertMany(documents);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/server selection|timed out|ECONNREFUSED|querySrv/i.test(message)) {
+      throw new Error(
+        `MongoDB connection failed: ${message}. If using Atlas, allow access from GitHub Actions (Network Access → allow 0.0.0.0/0 or add runner IPs).`,
+      );
+    }
+
+    throw error;
   } finally {
     await client.close();
   }

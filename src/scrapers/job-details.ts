@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import { PAGE_SETTLE_DELAY_MS } from "../shared/constants.ts";
+import { gotoPage } from "../shared/browser.ts";
 import type {
   JobDetailResult,
   KeyValueRow,
@@ -31,7 +32,7 @@ export async function scrapeJobDetail(page: Page, item: NotificationItem): Promi
   }
 
   try {
-    await page.goto(item.url, { waitUntil: "domcontentloaded" });
+    await gotoPage(page, item.url);
     await page.waitForSelector("body", { timeout: 30_000 });
     await page.waitForTimeout(PAGE_SETTLE_DELAY_MS);
   } catch (error: unknown) {

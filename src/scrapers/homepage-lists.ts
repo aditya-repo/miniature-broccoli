@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import { PAGE_SETTLE_DELAY_MS, TARGET_URL } from "../shared/constants.ts";
+import { gotoPage } from "../shared/browser.ts";
 import { SCRAPE_CONFIG } from "../config/scrape-config.ts";
 import type { LatestNotificationsResult } from "../shared/types.ts";
 import { getHomepageSectionTitles } from "../shared/section-config.ts";
@@ -44,7 +45,7 @@ function canonicalizeSectionTitle(title: string, allowedTitles: string[]): strin
 }
 
 export async function scrapeHomepageLists(page: Page): Promise<LatestNotificationsResult> {
-  await page.goto(TARGET_URL, { waitUntil: "domcontentloaded" });
+  await gotoPage(page, TARGET_URL);
   await page.waitForSelector("body", { timeout: 30_000 });
   try {
     await page.waitForSelector("a", { timeout: 10_000, state: "attached" });
